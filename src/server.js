@@ -6,18 +6,20 @@ import honeypotRoutes from './routes/honeypot.js';
 // Initialize Express app
 const app = express();
 
-// CORS configuration for production
+// CORS configuration - Allow all origins for API access
 const corsOptions = {
-    origin: process.env.NODE_ENV === 'production'
-        ? process.env.CLIENT_URL || true  // Use CLIENT_URL in production, or allow all if not set
-        : true,  // Allow all origins in development
-    credentials: true,
+    origin: '*',  // Allow all origins
+    credentials: false,  // Must be false when origin is '*'
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'x-api-key', 'Authorization']
 };
 
 // Middleware
 app.use(cors(corsOptions));
+
+// Handle preflight requests explicitly
+app.options('*', cors(corsOptions));
+
 app.use(express.json());
 
 // Request logging middleware
