@@ -17,27 +17,31 @@ function initializeAI() {
 const scamIndicators = {
     urgency: {
         patterns: ['urgent', 'immediately', 'right now', 'within 24 hours', 'today only', 'expires', 'last chance', 'act now', 'dont delay', "don't delay"],
-        weight: 0.15
+        weight: 0.4  // Increased from 0.15
     },
     threats: {
-        patterns: ['blocked', 'suspended', 'terminated', 'legal action', 'police', 'arrest', 'fine', 'penalty', 'frozen'],
-        weight: 0.2
+        patterns: ['blocked', 'suspended', 'terminated', 'legal action', 'police', 'arrest', 'fine', 'penalty', 'frozen', 'court', 'warrant'],
+        weight: 0.5 // Increased from 0.2
     },
     financialRequest: {
-        patterns: ['bank account', 'upi', 'transfer', 'payment', 'otp', 'pin', 'cvv', 'card number', 'account number', 'share your', 'send money'],
-        weight: 0.25
+        patterns: ['bank account', 'upi', 'transfer', 'payment', 'otp', 'pin', 'cvv', 'card number', 'account number', 'share your', 'send money', 'deposit'],
+        weight: 0.5 // Increased from 0.25
     },
     impersonation: {
-        patterns: ['rbi', 'reserve bank', 'income tax', 'government', 'official', 'customer care', 'bank manager', 'technical support'],
-        weight: 0.15
+        patterns: ['rbi', 'reserve bank', 'income tax', 'government', 'official', 'customer care', 'bank manager', 'technical support', 'support team'],
+        weight: 0.4 // Increased from 0.15
     },
     rewards: {
-        patterns: ['winner', 'lottery', 'prize', 'cashback', 'reward', 'free gift', 'lucky', 'selected', 'congratulations'],
-        weight: 0.15
+        patterns: ['winner', 'lottery', 'prize', 'cashback', 'reward', 'free gift', 'lucky', 'selected', 'congratulations', 'won'],
+        weight: 0.3 // Increased from 0.15
     },
     verification: {
-        patterns: ['verify', 'kyc', 'update details', 'confirm identity', 'link aadhaar', 'pan card', 're-verify'],
-        weight: 0.1
+        patterns: ['verify', 'kyc', 'update details', 'confirm identity', 'link aadhaar', 'pan card', 're-verify', 'update pan'],
+        weight: 0.3 // Increased from 0.1
+    },
+    jobScam: {
+        patterns: ['part-time', 'job', 'hiring', 'recruit', 'vacancy', 'daily income', 'earn daily', 'work from home', 'wfh', 'no investment', 'telegram', 'whatsapp', 'task based', 'youtube likes'],
+        weight: 0.5 // Increased from 0.25
     }
 };
 
@@ -86,25 +90,24 @@ async function detectWithAI(text, conversationHistory = []) {
             ? `Previous messages:\n${conversationHistory.map(m => `${m.sender}: ${m.text}`).join('\n')}\n\n`
             : '';
 
-        const prompt = `You are a scam detection expert. Analyze the following message for scam intent.
-
+        const prompt = `You are a STRICT and PARANOID scam detection expert. Your job is to FLAG ANY SUSPICIOUS MESSAGE immediately.
+        
 ${historyContext}Latest message: "${text}"
 
-Evaluate if this is a scam message. Consider:
-1. Urgency tactics (creating panic or time pressure)
-2. Impersonation of authorities (banks, government, companies)
-3. Requests for sensitive information (OTP, PIN, passwords, bank details)
-4. Threats of account suspension, legal action, or penalties
-5. Too-good-to-be-true offers (lottery wins, prizes, rewards)
-6. Suspicious links or requests to click/download
-7. Poor grammar/spelling typical of scam messages
-8. Inconsistencies in the conversation
+Evaluate if this is a scam message. BE VERY STRICT.
+If the message contains ANY of the following, IT IS A SCAM:
+1. Job offers via WhatsApp/Telegram (especially "part-time", "like videos", "task based")
+2. Requests for money, UPI transfers, or bank details
+3. Threats of legal action, arrest, or account blocking
+4. Offers of free money, lottery wins, or prizes
+5. Requests to download APKs or visit suspicious links
+6. Impersonation of government officials or bank support
 
 Respond ONLY with a JSON object in this exact format:
 {
-  "isScam": true/false,
-  "confidence": 0.0 to 1.0,
-  "scamType": "string describing the type of scam or 'none'",
+  "isScam": true, // DEFAULT TO TRUE if even slightly suspicious
+  "confidence": 0.0 to 1.0, // Should be HIGH (>0.8) for job offers and threats
+  "scamType": "string describing the type of scam",
   "indicators": ["list", "of", "suspicious", "elements"],
   "reasoning": "brief explanation"
 }`;
@@ -119,17 +122,31 @@ Respond ONLY with a JSON object in this exact format:
             temperature: 0.1
         });
 
-        const responseText = response.choices[0]?.message?.content || '';
+        let responseText = response.choices[0]?.message?.content || '';
+        console.log('Gemini Raw Response:', responseText);
+
+        // Clean markdown code blocks if present
+        responseText = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
 
         // Parse JSON from response
         const jsonMatch = responseText.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
-            return JSON.parse(jsonMatch[0]);
+            try {
+                const parsed = JSON.parse(jsonMatch[0]);
+                return parsed;
+            } catch (e) {
+                console.error('JSON Parsing Error:', e);
+                console.error('Failed Text:', responseText);
+                return null;
+            }
         }
 
         return null;
     } catch (error) {
-        console.error('AI detection error:', error.message);
+        console.error('AI detection error:', error);
+        if (error.response) {
+            console.error('API Error Data:', error.response.data);
+        }
         return null;
     }
 }
@@ -152,12 +169,23 @@ export async function detectScam(text, conversationHistory = []) {
     let reasoning = `Rule-based detection found indicators in categories: ${indicators.join(', ')}`;
 
     if (aiResult) {
-        // Weight AI result more heavily if available
-        finalConfidence = (ruleBasedResult.score * 0.3) + (aiResult.confidence * 0.7);
-        isScam = finalConfidence >= config.scamThreshold || aiResult.isScam;
-        scamType = aiResult.scamType || scamType;
+        // AI result logic
+        // If Rule-based detection is STRONG, override AI if AI is lenient
+        if (ruleBasedResult.score > 0.4 && !aiResult.isScam) {
+            console.log("Rule-based detection overrides AI (Safe -> Scam)");
+            finalConfidence = Math.max(ruleBasedResult.score, aiResult.confidence);
+            isScam = true;
+            scamType = 'suspected scam';
+            reasoning = "Rule-based pattern matching flagged this as a potential scam despite AI analysis.";
+        } else {
+            // Take the HIGHER confidence score, don't average down
+            finalConfidence = Math.max(ruleBasedResult.score, aiResult.confidence);
+            isScam = aiResult.isScam || finalConfidence >= config.scamThreshold;
+            scamType = aiResult.scamType || scamType;
+            reasoning = aiResult.reasoning || reasoning;
+        }
+
         indicators = [...new Set([...indicators, ...(aiResult.indicators || [])])];
-        reasoning = aiResult.reasoning || reasoning;
     }
 
     return {
