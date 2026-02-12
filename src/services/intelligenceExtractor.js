@@ -6,11 +6,20 @@
 // Regex patterns for intelligence extraction
 const patterns = {
     // Bank account patterns (Indian format)
-    // NOTE: We intentionally avoid matching plain long digit sequences without context,
-    // to reduce false positives when users type random numbers.
+    // We require some banking context around the digits so that random
+    // numbers are not treated as account numbers.
     bankAccounts: [
-        /\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b/g,  // Card-like patterns (16-digit, grouped)
-        /(?:account|a\/c|ac)\s*(?:no|number|#)?[:\s]*(\d{9,18})/gi, // Explicit "account" context
+        // Card-like patterns (16-digit, grouped)
+        /\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b/g,
+
+        // Explicit "account" context before the digits
+        /(?:account(?:[_\s]*number)?|account(?:[_\s]*no)?|a\/c|ac|acct)\s*(?:no|number|#)?[:\s-]*([0-9]{9,18})/gi,
+
+        // Bank-name context within a short window BEFORE the digits
+        /(?:state bank of india|sbi|hdfc|icici|axis|pnb|punjab national bank)[^0-9]{0,20}([0-9]{9,18})/gi,
+
+        // Bank-name context within a short window AFTER the digits
+        /([0-9]{9,18})[^0-9]{0,20}(?:state bank of india|sbi|hdfc|icici|axis|pnb|punjab national bank)/gi,
     ],
 
     // UPI ID patterns
